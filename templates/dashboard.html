@@ -16,7 +16,83 @@
         </ul>
     </div>
 </div>
+
+<!-- Contenedor para la gráfica -->
+<div class="row mt-4">
+    <div class="col-md-12">
+        <canvas id="objectChart"></canvas>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-database.js"></script>
+
 <script>
+    // Configuración de Firebase
+    const firebaseConfig = {
+        apiKey: "Tu-API-key",
+        authDomain: "proyecto-iot-887b4.firebaseapp.com",
+        projectId: "proyecto-iot-887b4",
+        storageBucket: "proyecto-iot-887b4.appspot.com",
+        messagingSenderId: "514495850093",
+        appId: "1:514495850093:web:47e1db6a513bd0fe9f0164",
+        measurementId: "G-1B4NXZ7M6T"
+    };
+
+    // Inicializar Firebase
+    firebase.initializeApp(firebaseConfig);
+
+    // Crear la gráfica de barras
+    const ctx = document.getElementById('objectChart').getContext('2d');
+    const objectChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Cantidad de Objetos',
+                data: [],
+                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Función para actualizar la gráfica
+    function updateChart(data) {
+        const labels = Object.keys(data);
+        const values = Object.values(data);
+
+        objectChart.data.labels = labels;
+        objectChart.data.datasets[0].data = values;
+        objectChart.update();
+    }
+
+    // Referencia a la base de datos
+    const dbRef = firebase.database().ref('object_counts');
+
+    // Actualizar los conteos de objetos en tiempo real desde Firebase
+    dbRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        const list = document.getElementById('object-counts');
+        list.innerHTML = '';
+        for (const [key, value] of Object.entries(data)) {
+            const item = document.createElement('li');
+            item.className = 'list-group-item';
+            item.textContent = `${key}: ${value}`;
+            list.appendChild(item);
+        }
+        updateChart(data);  // Actualiza la gráfica
+    });
+
     function updateObjectCounts() {
         fetch("{{ url_for('object_counts_endpoint') }}")
             .then(response => response.json())
@@ -29,6 +105,7 @@
                     item.textContent = `${key}: ${value}`;
                     list.appendChild(item);
                 }
+                updateChart(data);  // Actualiza la gráfica
             });
     }
 

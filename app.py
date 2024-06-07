@@ -2,8 +2,20 @@ from flask import Flask, render_template, Response, jsonify
 import cv2
 import numpy as np
 import csv
+import firebase_admin
+from firebase_admin import credentials, db
+import os
 
 app = Flask(__name__)
+
+# Inicializar Firebase
+cred = credentials.Certificate("firebase_credentials.json")
+try:
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': 'https://proyecto-iot-887b4-default-rtdb.firebaseio.com/'  # Actualiza esto con la URL correcta
+    })
+except ValueError as e:
+    print(f"Error initializing Firebase: {e}")
 
 # Ruta del archivo CSV para guardar los recuentos
 csv_file = 'object_counts.csv'
@@ -18,7 +30,7 @@ configPath = 'ssd_mobilenet_v3_large_coco_2020_01_14.pbtxt'
 weightsPath = 'frozen_inference_graph.pb'
 
 net = cv2.dnn_DetectionModel(weightsPath, configPath)
-net.setInputSize(320, 320)
+net.setInputSize(320, 320)  # Tamaño de entrada mayor para mejor precisión
 net.setInputScale(1.0 / 127.5)
 net.setInputMean((127.5, 127.5, 127.5))
 net.setInputSwapRB(True)
@@ -39,25 +51,40 @@ def gen_frames():
             if not success:
                 break
 
-            classIds, confs, bbox = net.detect(img, confThreshold=0.5)
+            classIds, confs, bbox = net.detect(img, confThreshold=0.7)  # Umbral de confianza más alto
             object_counts = {}
 
             if len(classIds) != 0:
-                for classId, confidence, box in zip(classIds.flatten(), confs.flatten(), bbox):
-                    className = classNames[classId - 1]
-                    cv2.rectangle(img, box, color=(0, 255, 0), thickness=3)
-                    cv2.putText(img, className, (box[0] + 10, box[1] + 30), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
+                indices = cv2.dnn.NMSBoxes(bbox, confs, score_threshold=0.7, nms_threshold=0.3)  # Umbral de NMS reducido
 
-                    if className not in object_counts:
-                        object_counts[className] = 1
-                    else:
-                        object_counts[className] += 1
+                # Ordenar las detecciones por el área del bounding box (prioridad a los objetos más cercanos)
+                if len(indices) > 0:
+                    indices = indices.flatten()
+                    sorted_indices = sorted(indices, key=lambda i: bbox[i][2] * bbox[i][3], reverse=True)
 
-                for key, value in object_counts.items():
-                    writer.writerow([key, value])
+                    for i in sorted_indices:
+                        box = bbox[i]
+                        classId = classIds[i]
+                        confidence = confs[i]
+                        className = classNames[classId - 1]
+                        cv2.rectangle(img, box, color=(0, 255, 0), thickness=3)
+                        cv2.putText(img, f'{className} ({confidence:.2f})', (box[0] + 10, box[1] + 30), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
 
-                for idx, (key, value) in enumerate(object_counts.items()):
-                    cv2.putText(img, f"{key}: {value}", (10, 50 + 30 * idx), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
+                        if className not in object_counts:
+                            object_counts[className] = 1
+                        else:
+                            object_counts[className] += 1
+
+                    for key, value in object_counts.items():
+                        writer.writerow([key, value])
+
+                    for idx, (key, value) in enumerate(object_counts.items()):
+                        cv2.putText(img, f"{key}: {value}", (10, 50 + 30 * idx), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
+
+                    try:
+                        db.reference('object_counts').set(object_counts)
+                    except Exception as e:
+                        print(f"Error sending data to Firebase: {e}")
 
             ret, buffer = cv2.imencode('.jpg', img)
             frame = buffer.tobytes()
